@@ -17,3 +17,6 @@ __pycache__/
 
 # Editor-local files
 .vscode/*.log
+
+# Hermes agent planning metadata
+.hermes/
