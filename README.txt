@@ -66,6 +66,19 @@ Windows:
 Then open http://localhost:8080 in your browser.
 
 ------------------------------------------------------------
+3A. PRIVATE TAILSCALE ACCESS
+------------------------------------------------------------
+When the app is running on the `haipingxu` Windows machine, authorized
+Tailscale devices can use either of these private tailnet-only links:
+
+  - HTTPS hostname: https://haipingxu.tail9933e0.ts.net/
+  - Tailscale IP:   http://100.72.253.109:8081/
+
+These addresses are not public application endpoints. The accessing device
+must be connected to the same Tailscale network, and the Flask app and
+Tailscale Serve configuration must be running on the host machine.
+
+------------------------------------------------------------
 4. CONFIGURATION & OVERRIDES
 ------------------------------------------------------------
 You can override the following environment variables to change 
