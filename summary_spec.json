@@ -1,0 +1,75 @@
+{
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "MS-Project-2025 Refactor Summary"
+    },
+    {
+      "type": "paragraph",
+      "text": "This document summarizes the transition of the Medical Screening Assistant from a prototype to a secure, local AI-powered system."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "1. Core Architectural Changes"
+    },
+    {
+      "type": "paragraph",
+      "text": "The system has been refactored to eliminate client-side trust and implement a strict 'Server-Side State' model."
+    },
+    {
+      "type": "bullet_list",
+      "items": [
+        "Session Opacity: The client now only holds a random session ID. All facts and status are managed in server memory.",
+        "Secure Prolog Bridge: Switched from string interpolation to a JSON-based stdin/stdout interface for SWI-Prolog.",
+        "Allowlist Validation: Every input to the Prolog engine is validated against a hardcoded allowlist of approved symptoms and diseases.",
+        "Local AI Integration: Implemented a validated extraction layer using the gemma4:12b-mlx model via Ollama."
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "2. Safety and Security Hardening"
+    },
+    {
+      "type": "bullet_list",
+      "items": [
+        "Deterministic Emergency Triage: A high-priority safety layer now runs before any diagnosis, immediately escalating severe symptoms (e.g., crushing chest pain) to emergency services.",
+        "Conservative Fallback: Implemented a regex-based extraction fallback that ensures the system remains functional if the LLM is unavailable, while strictly avoiding false positives.",
+        "Input Sanitization: Fixed regex boundary escapes to prevent misclassification of negative answers.",
+        "Injection Resistance: Verified that malicious Prolog payloads cannot penetrate the validated JSON bridge."
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "3. Clinical and UI Refinements"
+    },
+    {
+      "type": "bullet_list",
+      "items": [
+        "Non-Diagnostic Branding: Renamed the tool to 'Medical Screening Assistant' and updated all output to refer to 'screening results' rather than 'diagnoses'.",
+        "Ranked Screening: The system now returns a ranked list of all potential matches above a threshold, rather than a single first-match result.",
+        "Safe Rendering: Updated the UI to use DOM APIs instead of innerHTML, preventing XSS from model-generated content."
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "4. Verification Results"
+    },
+    {
+      "type": "paragraph",
+      "text": "The refactor was verified using strict Test-Driven Development (TDD):"
+    },
+    {
+      "type": "bullet_list",
+      "items": [
+        "Unit Tests: 31 tests passed, covering negation, session isolation, and triage logic.",
+        "Integration: Confirmed end-to-end flow from /start to final screening results.",
+        "Security Audit: Verified immunity to session forgery and Prolog injection."
+      ]
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Medical Diagnosis Assistant</title>
+<title>Medical Screening Assistant</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -154,27 +154,27 @@ header p  { font-size: 12px; opacity: 0.75; margin-top: 1px; }
   flex-shrink: 0;
 }
 
-/* ---- Diagnosis card ---- */
-.diagnosis-card {
+/* ---- Screening card ---- */
+.screening-card {
   background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
   border: 1.5px solid #86efac;
   border-radius: 14px;
   padding: 14px 16px;
   margin-top: 4px;
 }
-.diagnosis-card .label {
+.screening-card .label {
   font-size: 11px; font-weight: 600;
   color: #16a34a; text-transform: uppercase; letter-spacing: 0.5px;
   margin-bottom: 6px;
 }
-.diagnosis-card .disease {
+.screening-card .disease {
   font-size: 20px; font-weight: 700; color: #15803d;
   text-transform: capitalize;
 }
-.diagnosis-card .symptoms {
+.screening-card .symptoms {
   margin-top: 8px; font-size: 12.5px; color: #166534;
 }
-.diagnosis-card .symptoms span {
+.screening-card .symptoms span {
   display: inline-block;
   background: rgba(22,101,52,0.1);
   border-radius: 10px;
@@ -187,10 +187,10 @@ header p  { font-size: 12px; opacity: 0.75; margin-top: 1px; }
 <header>
   <div class="avatar">⚕️</div>
   <div>
-    <h1>Medical Diagnosis Assistant</h1>
-    <p>Conversational AI · Prolog rules engine</p>
+    <h1>Medical Screening Assistant</h1>
+    <p>Conversational AI · Local AI-assisted screening</p>
   </div>
-  <div class="badge">🔒 Rules-based diagnosis</div>
+  <div class="badge">🔒 AI-assisted screening</div>
   <button id="restart-btn" title="Restart conversation"
     style="margin-left:10px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);color:white;border-radius:20px;padding:5px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">
     &#8635; Restart
@@ -250,7 +250,7 @@ function addBubble(text, role, extra) {
   // Append diagnosis card if provided
   if (extra) {
     const card = document.createElement('div');
-    card.className = 'diagnosis-card';
+    card.className = 'screening-card';
     card.innerHTML = `
       <div class="label">Prolog rule matched</div>
       <div class="disease">${extra.disease}</div>
@@ -316,21 +316,21 @@ async function send() {
     const res = await fetch('/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, session })
+      body: JSON.stringify({ message: text, session_id: session })
     });
     const data = await res.json();
     hideTyping();
-    session = data.session;
+    session = data.session_id;
 
-    // Show diagnosis card if Prolog confirmed a disease
     let extra = null;
-    if (data.debug?.prolog?.type === 'diagnosed') {
-      extra = data.debug.prolog;
+    if (data.result && data.result.type === 'screening' && data.result.candidates.length > 0) {
+      // Show the top candidate as the primary card
+      extra = data.result.candidates[0];
     }
 
     addBubble(data.message, 'doctor', extra);
 
-    if (session.done) {
+    if (data.done) {
       document.getElementById('bar').style.display = 'none';
       newChatBar.style.display = 'flex';
     } else {
@@ -358,7 +358,7 @@ async function startSession() {
     const res = await fetch('/start', { method: 'POST' });
     const data = await res.json();
     hideTyping();
-    session = data.session;
+    session = data.session_id;
     addBubble(data.message, 'doctor');
     setEnabled(true);
   } catch {
