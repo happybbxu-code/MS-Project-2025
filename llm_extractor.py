@@ -38,6 +38,7 @@ ALLOWED_FACTS = {
     "exercise_triggered",
     "fever",
     "night_sweats",
+    "nausea",
     "weight_loss",
     "unexplained_weight_loss",
     "tb_exposure",
@@ -192,6 +193,7 @@ FALLBACK_KEYWORDS = {
     "exercise_triggered": ["during exercise", "exercise makes"],
     "fever": ["fever", "high temperature"],
     "night_sweats": ["night sweats", "sweating at night"],
+    "nausea": ["nausea", "nauseous", "feel sick", "queasy", "want to vomit"],
     "weight_loss": ["weight loss", "lost weight", "losing weight"],
     "tb_exposure": ["exposed to tb", "contact with someone who had tb"],
 }

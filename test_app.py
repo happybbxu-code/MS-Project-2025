@@ -37,6 +37,152 @@ def test_detect_yes_no_handles_unrelated_text():
     assert app.detect_yes_no("I like apples") == "unrecognized"
 
 
+def test_pending_why_question_gets_explanation_without_advancing(monkeypatch):
+    extraction = ExtractionResult(
+        observations=[
+            Observation(
+                fact="nausea",
+                status="present",
+                subject="patient",
+                temporality="current",
+            )
+        ],
+        red_flags=[],
+        needs_clarification=False,
+        clarification_question=None,
+    )
+    monkeypatch.setattr(app, "extract_observations", lambda _: extraction)
+    client = app.app.test_client()
+    session_id = client.post("/start").get_json()["session_id"]
+
+    first = client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "I have nausea"},
+    ).get_json()
+    assert "blood sugar" in first["message"].lower()
+
+    second = client.post(
+        "/chat",
+        json={
+            "session_id": session_id,
+            "message": "why do i have to answer yes, no or not sure",
+        },
+    ).get_json()
+    session = app._get_session(session_id)
+
+    assert "because" in second["message"].lower()
+    assert "blood sugar" in second["message"].lower()
+    assert session["pending_fact"] == "elevated_glucose"
+    assert "elevated_glucose" not in session["asked"]
+
+
+def test_pending_how_are_you_replies_socially_without_advancing(monkeypatch):
+    extraction = ExtractionResult(
+        observations=[
+            Observation(
+                fact="nausea",
+                status="present",
+                subject="patient",
+                temporality="current",
+            )
+        ],
+        red_flags=[],
+        needs_clarification=False,
+        clarification_question=None,
+    )
+    monkeypatch.setattr(app, "extract_observations", lambda _: extraction)
+    client = app.app.test_client()
+    session_id = client.post("/start").get_json()["session_id"]
+
+    client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "I have nausea"},
+    )
+    response = client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "How are you doing?"},
+    )
+    body = response.get_json()
+    session = app._get_session(session_id)
+
+    assert "doing well" in body["message"].lower()
+    assert "blood sugar" in body["message"].lower()
+    assert session["pending_fact"] == "elevated_glucose"
+    assert "elevated_glucose" not in session["asked"]
+
+
+def test_pending_hello_greets_without_advancing(monkeypatch):
+    extraction = ExtractionResult(
+        observations=[
+            Observation(
+                fact="nausea",
+                status="present",
+                subject="patient",
+                temporality="current",
+            )
+        ],
+        red_flags=[],
+        needs_clarification=False,
+        clarification_question=None,
+    )
+    monkeypatch.setattr(app, "extract_observations", lambda _: extraction)
+    client = app.app.test_client()
+    session_id = client.post("/start").get_json()["session_id"]
+
+    client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "I have nausea"},
+    )
+    response = client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "Hello"},
+    )
+    body = response.get_json()
+    session = app._get_session(session_id)
+
+    assert body["message"].startswith("Hello!")
+    assert "when you're ready, could you answer the previous question:" in body["message"].lower()
+    assert "blood sugar" in body["message"].lower()
+    assert session["pending_fact"] == "elevated_glucose"
+    assert "elevated_glucose" not in session["asked"]
+
+
+def test_pending_who_are_you_preserves_question(monkeypatch):
+    extraction = ExtractionResult(
+        observations=[
+            Observation(
+                fact="nausea",
+                status="present",
+                subject="patient",
+                temporality="current",
+            )
+        ],
+        red_flags=[],
+        needs_clarification=False,
+        clarification_question=None,
+    )
+    monkeypatch.setattr(app, "extract_observations", lambda _: extraction)
+    client = app.app.test_client()
+    session_id = client.post("/start").get_json()["session_id"]
+
+    client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "I have nausea"},
+    )
+    response = client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "Who are you?"},
+    )
+    body = response.get_json()
+    session = app._get_session(session_id)
+
+    assert body["message"].startswith("I'm a medical screening assistant.")
+    assert "when you're ready, could you answer the previous question:" in body["message"].lower()
+    assert "blood sugar" in body["message"].lower()
+    assert session["pending_fact"] == "elevated_glucose"
+    assert "elevated_glucose" not in session["asked"]
+
+
 def test_start_uses_server_side_session_identifier():
     client = app.app.test_client()
 
@@ -361,9 +507,7 @@ def test_chat_uses_server_state_and_llm_extraction(monkeypatch):
     assert "recurring cough" in body["message"].lower()
 
 
-def test_general_query_with_no_symptoms_advances_to_next_question(monkeypatch):
-    # A non-symptomatic message (e.g. a greeting) must not loop; it should
-    # move on to the next pending question or produce a polite fallback.
+def test_how_are_you_gets_social_reply_without_starting_screening(monkeypatch):
     extraction = ExtractionResult(
         observations=[],
         red_flags=[],
@@ -377,14 +521,75 @@ def test_general_query_with_no_symptoms_advances_to_next_question(monkeypatch):
 
     response = client.post(
         "/chat",
-        json={"session_id": session_id, "message": "How are you?"},
+        json={"session_id": session_id, "message": "How are you doing?"},
     )
     body = response.get_json()
+    session = app._get_session(session_id)
 
     assert response.status_code == 200
     assert body["done"] is False
-    # It must not loop on the repeating symptom-clarification prompt.
-    assert "more specifically" not in body["message"].lower()
+    assert "doing well" in body["message"].lower()
+    assert "health concern" in body["message"].lower()
+    assert session["pending_fact"] is None
+    assert session["pending_question"] is None
+    assert session["asked"] == set()
+
+
+def test_hello_gets_greeting_without_starting_screening(monkeypatch):
+    extraction = ExtractionResult(
+        observations=[],
+        red_flags=[],
+        needs_clarification=True,
+        is_general_query=True,
+        clarification_question=None,
+    )
+    monkeypatch.setattr(app, "extract_observations", lambda _: extraction)
+    client = app.app.test_client()
+    session_id = client.post("/start").get_json()["session_id"]
+
+    response = client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "Hello"},
+    )
+    body = response.get_json()
+    session = app._get_session(session_id)
+
+    assert response.status_code == 200
+    assert body["done"] is False
+    assert body["message"].startswith("Hello!")
+    assert "how can i help you today" in body["message"].lower()
+    assert session["pending_fact"] is None
+    assert session["pending_question"] is None
+    assert session["asked"] == set()
+
+
+def test_who_are_you_explains_identity_without_starting_screening(monkeypatch):
+    extraction = ExtractionResult(
+        observations=[],
+        red_flags=[],
+        needs_clarification=True,
+        is_general_query=True,
+        clarification_question=None,
+    )
+    monkeypatch.setattr(app, "extract_observations", lambda _: extraction)
+    client = app.app.test_client()
+    session_id = client.post("/start").get_json()["session_id"]
+
+    response = client.post(
+        "/chat",
+        json={"session_id": session_id, "message": "Who are you?"},
+    )
+    body = response.get_json()
+    session = app._get_session(session_id)
+
+    assert response.status_code == 200
+    assert body["done"] is False
+    assert body["message"].startswith("I'm a medical screening assistant.")
+    assert "not a doctor" in body["message"].lower()
+    assert "confirmed diagnosis" in body["message"].lower()
+    assert session["pending_fact"] is None
+    assert session["pending_question"] is None
+    assert session["asked"] == set()
 
 
 def test_pending_negative_answer_is_not_reextracted(monkeypatch):

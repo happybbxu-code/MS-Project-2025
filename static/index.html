@@ -250,7 +250,7 @@ function addBubble(text, role, extra) {
   // Append diagnosis card if provided
   if (extra) {
     const card = document.createElement('div');
-    card.className = 'diagnosis-card';
+    card.className = 'screening-card';
     card.innerHTML = `
       <div class="label">Prolog rule matched</div>
       <div class="disease">${extra.disease}</div>

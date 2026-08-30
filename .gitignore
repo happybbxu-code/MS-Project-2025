@@ -20,3 +20,4 @@ __pycache__/
 
 # Hermes agent planning metadata
 .hermes/
+lan_server.log

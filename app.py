@@ -1,7 +1,8 @@
 """
-Medical Diagnosis Chat — Flask + Prolog (no API key needed)
+Medical Diagnosis Chat — Flask + Prolog + local LLM (no external API key)
 
-Symptom extraction:  keyword rules (rule-based NLP)
+Symptom extraction:  local LLM via Ollama (llm_extractor), with a
+                      keyword fallback when the model is unavailable
 Diagnosis decision:  SWI-Prolog production rules
 Doctor responses:    templated strings
 
@@ -90,6 +91,19 @@ def _get_session(session_id):
         return session
 
 
+def _prune_expired_sessions():
+    """Remove sessions idle past the TTL. Bounded cost; called on /start."""
+    now = time.time()
+    with SESSION_LOCK:
+        expired = [
+            sid for sid, session in SESSIONS.items()
+            if now - session['updated_at'] > SESSION_TTL_SECONDS
+        ]
+        for sid in expired:
+            del SESSIONS[sid]
+        return len(expired)
+
+
 def apply_extraction(session, extraction):
     """Apply only current observations about the patient to server state."""
     for observation in extraction.observations:
@@ -113,33 +127,8 @@ def apply_extraction(session, extraction):
 
 
 # ---------------------------------------------------------------------------
-# Keyword-based symptom extraction  (no API needed)
+# Yes/No answer classification for pending questions
 # ---------------------------------------------------------------------------
-
-SYMPTOM_KEYWORDS = {
-    'fatigue':               ['tired', 'fatigue', 'exhausted', 'weak', 'weakness', 'lethargic', 'no energy'],
-    'headache':              ['headache', 'head ache', 'head pain', 'migraine', 'head hurts'],
-    'elevated_bp':           ['high blood pressure', 'high bp', 'elevated bp', 'hypertension', 'blood pressure high'],
-    'elevated_glucose':      ['high blood sugar', 'high glucose', 'elevated glucose', 'blood sugar', 'sugar level'],
-    'polyuria':              ['urinating a lot', 'pee a lot', 'urinate often', 'frequent urination', 'urinating more'],
-    'polydipsia':            ['very thirsty', 'always thirsty', 'excessive thirst', 'drinking a lot of water'],
-    'pale_skin':             ['pale', 'pale skin', 'pallor', 'skin looks pale', 'look pale'],
-    'dizziness':             ['dizzy', 'dizziness', 'lightheaded', 'light headed', 'spinning'],
-    'dysuria':               ['burning when i urinate', 'burning urination', 'pain urinating', 'painful urination',
-                              'burning pee', 'stinging urination'],
-    'urinary_frequency':     ['urinate frequently', 'frequent urination', 'bathroom often', 'pee often', 'need to urinate'],
-    'cough':                 ['cough', 'coughing'],
-    'shortness_of_breath':   ['short of breath', 'shortness of breath', 'breathless', 'hard to breathe',
-                              'difficulty breathing', 'out of breath'],
-    'fever':                 ['fever', 'high temperature', 'high temp', 'temperature', 'running a fever'],
-    'night_sweats':          ['night sweats', 'sweating at night', 'sweat at night', 'wake up sweating'],
-    'weight_loss':           ['lost weight', 'weight loss', 'losing weight', 'dropped weight'],
-    'nausea':                ['nausea', 'nauseous', 'feel sick', 'queasy', 'want to vomit'],
-    'chest_pain':            ['chest pain', 'chest hurts', 'chest ache', 'pain in chest'],
-    'persistent_cough':      ['cough for weeks', 'weeks of coughing', 'long cough', 'cough that wont go away'],
-    'chronic_cough':         ['cough at night', 'cough worse at night', 'night cough', 'recurring cough'],
-    'wheezing':              ['wheeze', 'wheezing', 'whistling breath', 'whistling sound breathing'],
-}
 
 YES_WORDS = ['yes', 'yeah', 'yep', 'yup', 'correct', 'right', 'sure', 'absolutely',
              'definitely', 'i do', 'i have', 'that is right', "that's right", 'indeed',
@@ -159,17 +148,95 @@ UNSURE_PATTERNS = ['not sure', "don't know", 'dont know', 'no test', 'not tested
                    "haven't tested", 'not taken', 'unknown', 'no idea', 'unsure',
                    'not checked', 'never checked', 'no result', 'yet to']
 
+EXPLANATION_PREFIXES = (
+    'why',
+    'how come',
+    'what is the reason',
+    "what's the reason",
+)
 
-def extract_symptoms(text):
-    """Return list of symptom atoms found in free text via keyword matching."""
-    tl = text.lower()
-    found = []
-    for fact, keywords in SYMPTOM_KEYWORDS.items():
-        for kw in keywords:
-            if kw in tl:
-                found.append(fact)
-                break
-    return found
+QUESTION_EXPLANATIONS = {
+    'elevated_glucose': (
+        'I ask because nausea can have many causes, and abnormal blood sugar is '
+        'one possibility this limited screening checks. A yes, no, or not sure '
+        'answer lets the rule-based engine record the result clearly; it does '
+        'not mean that you have diabetes.'
+    ),
+}
+
+
+def is_explanation_request(text):
+    """Return True when the user asks why a pending question is necessary."""
+    normalized = re.sub(r"\s+", " ", text.lower().strip())
+    return normalized.startswith(EXPLANATION_PREFIXES)
+
+
+def pending_question_explanation(session):
+    """Explain the current screening question without resolving it."""
+    fact = session.get('pending_fact')
+    explanation = QUESTION_EXPLANATIONS.get(
+        fact,
+        (
+            'I ask because each question checks one observation used by the '
+            'rule-based screening engine. A yes, no, or not sure answer records '
+            'it clearly; the question does not imply a diagnosis.'
+        ),
+    )
+    question = session.get('pending_question') or ''
+    return explanation + ('\n\n' + question if question else '')
+
+
+def _normalized_social_text(text):
+    """Normalize short social messages for exact, bounded matching."""
+    normalized = re.sub(r"[^a-z0-9'\s]", "", text.lower())
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def is_how_are_you_query(text):
+    """Recognize bounded social check-ins, not arbitrary medical questions."""
+    return _normalized_social_text(text) in {
+        'how are you',
+        'how are you doing',
+        "how's it going",
+        'hows it going',
+    }
+
+
+def is_greeting(text):
+    """Recognize a standalone greeting without matching symptom narratives."""
+    return _normalized_social_text(text) == 'hello'
+
+
+def is_identity_query(text):
+    """Recognize a direct question about the assistant's identity."""
+    return _normalized_social_text(text) == 'who are you'
+
+
+def general_query_response(text):
+    """Reply conversationally without changing the screening state."""
+    if is_identity_query(text):
+        return (
+            "I'm a medical screening assistant. I can help collect information "
+            "about your symptoms and guide you through a rule-based screening "
+            "process. I'm not a doctor, and I cannot provide a confirmed "
+            "diagnosis or replace professional medical care."
+        )
+    if is_greeting(text):
+        return (
+            "Hello! How can I help you today? If you have a health concern, "
+            "you can describe what you're experiencing, and I'll guide you "
+            "through the screening process."
+        )
+    if is_how_are_you_query(text):
+        return (
+            "I'm doing well, thank you for asking! How are you doing? "
+            "If you have a health concern you'd like to discuss, I'm here "
+            "to help with the screening process."
+        )
+    return (
+        "I'm here to help with health screening. If you have a health "
+        "concern, please describe what you are experiencing."
+    )
 
 
 def _has_phrase(text, phrase):
@@ -424,6 +491,7 @@ def index():
 
 @app.route('/start', methods=['POST'])
 def start():
+    _prune_expired_sessions()
     session_id = _create_session()
     return jsonify({
         'message': WELCOME,
@@ -448,6 +516,28 @@ def chat():
     red_flags = set()
 
     if pending_fact:
+        if is_explanation_request(user_message):
+            return jsonify({
+                'message': pending_question_explanation(session),
+                'session_id': body['session_id'],
+                'done': False,
+            })
+
+        if (
+            is_how_are_you_query(user_message)
+            or is_greeting(user_message)
+            or is_identity_query(user_message)
+        ):
+            return jsonify({
+                'message': (
+                    general_query_response(user_message)
+                    + "\n\nWhen you're ready, could you answer the previous question: "
+                    + (pending_question or '')
+                ),
+                'session_id': body['session_id'],
+                'done': False,
+            })
+
         answer = detect_yes_no(user_message)
         if answer == 'unrecognized':
             return jsonify({
@@ -482,19 +572,11 @@ def chat():
 
         if extraction.needs_clarification:
             if extraction.is_general_query:
-                next_q = next_question(session)
-                if next_q:
-                    return jsonify({
-                        'message': question_message(session, next_q),
-                        'session_id': body['session_id'],
-                        'done': False,
-                    })
-                else:
-                    return jsonify({
-                        'message': 'How can I help you? Please describe any symptoms you are feeling.',
-                        'session_id': body['session_id'],
-                        'done': False,
-                    })
+                return jsonify({
+                    'message': general_query_response(user_message),
+                    'session_id': body['session_id'],
+                    'done': False,
+                })
             else:
                 return jsonify({
                     'message': extraction.clarification_question or (
@@ -538,5 +620,5 @@ def chat():
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    print('\nStarting Medical Diagnosis Chat at http://localhost:8080\n')
-    app.run(debug=False, port=8080)
+    print('\nStarting Medical Diagnosis Chat at http://127.0.0.1:8080\n')
+    app.run(host='127.0.0.1', debug=False, port=8080)
