@@ -21,3 +21,6 @@ __pycache__/
 # Hermes agent planning metadata
 .hermes/
 lan_server.log
+
+# Browser test dependencies
+tests/browser/node_modules/
